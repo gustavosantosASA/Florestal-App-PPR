@@ -74,3 +74,20 @@ def read_sheet_to_dataframe_filtered(url, worksheet_name, user_email=None):
         
         return df
     return None
+
+def update_row_in_sheet(url, worksheet_name, row_num, new_values):
+    """Atualiza uma linha específica"""
+    worksheet = get_worksheet(url, worksheet_name)
+    if worksheet:
+        for col, value in enumerate(new_values, start=1):
+            worksheet.update_cell(row_num, col, value)
+        return True
+    return False
+
+def delete_row_in_sheet(url, worksheet_name, row_num):
+    """Remove uma linha específica"""
+    worksheet = get_worksheet(url, worksheet_name)
+    if worksheet:
+        worksheet.delete_rows(row_num)
+        return True
+    return False
