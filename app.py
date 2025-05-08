@@ -119,16 +119,18 @@ def show_main_app():
     """Conteúdo principal após login"""
     # Barra superior com informações do usuário
     st.sidebar.title(f"👋 Olá, {st.session_state['user']['Login']}!")
+    st.sidebar.write(f"E-mail: {st.session_state['user']['Email']}")
     st.sidebar.write(f"Tipo: {st.session_state['user']['Tipo de Usuário']}")
+    
     if st.sidebar.button("🚪 Sair"):
         st.session_state.clear()
         st.rerun()
-    
+
     # Título da página
     st.title("📅 Visualizador de Cronograma")
     
-    # Carrega dados
-    df = load_data()
+    # Carrega dados filtrados pelo e-mail do usuário
+    df = load_data_filtered(st.session_state['user']['Email'])
     
     if df is not None:
         # --- SEÇÃO DE FILTROS DINÂMICOS ---
