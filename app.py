@@ -173,7 +173,7 @@ def show_main_app():
                 )
         
         # Aplica filtros
-        filtered_df = apply_dynamic_filters(df.copy(), filters)
+        filtered_df = apply_filters(df.copy(), filters)
         
         # ========================================
         # EXIBIÇÃO DOS CARDS (CONTAINER APPROACH)
