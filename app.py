@@ -119,33 +119,19 @@ def load_data(user_email=None):
 
 def show_main_app():
     """Conteúdo principal após login"""
-    # 1. Verificação de segurança
-    if 'user' not in st.session_state:
-        st.error("Erro de autenticação. Redirecionando para login...")
+    # Verificação de segurança reforçada
+    if 'user' not in st.session_state or 'Email' not in st.session_state['user']:
+        st.error("Sessão inválida. Redirecionando para login...")
         st.session_state.clear()
         st.rerun()
     
-    # 2. Define o tipo de usuário
-    user_type = st.session_state['user']['Tipo de Usuário']
-    is_admin = user_type == "Administrador"
-    user_email = None if is_admin else st.session_state['user']['Email']
+    # Agora podemos acessar st.session_state['user'] com segurança
+    user = st.session_state['user']
+    is_admin = user['Tipo de Usuário'] == "Administrador"
     
-    # 3. Barra lateral
-    st.sidebar.title(f"👤 {st.session_state['user']['Login']}")
-    st.sidebar.write(f"Tipo: {user_type}")
-    if st.sidebar.button("🚪 Sair"):
-        st.session_state.clear()
-        st.rerun()
-    
-    # 4. Carrega dados (com filtro para não-admins)
+    # Carrega dados com filtro por e-mail se não for admin
+    user_email = None if is_admin else user['Email']
     df = load_data(user_email)
-    
-    # 5. Exibe mensagem de contexto
-    st.title("📅 Visualizador de Cronograma")
-    if is_admin:
-        st.success("🔧 Modo Administrador: Visualizando todos os registros")
-    else:
-        st.info(f"👤 Visualizando apenas seus registros (E-mail: {user_email})")
     
     # Carrega dados
     df = load_data(user['Email'] if not is_admin else None)
