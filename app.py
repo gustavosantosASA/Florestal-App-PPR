@@ -111,9 +111,19 @@ def show_register_form():
 # FUNÇÕES PRINCIPAIS DO SISTEMA
 # ==================================================
 @st.cache_data(ttl=300)
-def load_data():
-    """Carrega os dados do cronograma"""
-    return read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_DATA)
+def load_data_filtered(user_email=None):
+    """Carrega os dados do cronograma com filtro por e-mail"""
+    df = read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_DATA)
+    
+    if df is not None and user_email:
+        # Verifica se a coluna 'E-mail' existe
+        if 'E-mail' in df.columns:
+            # Filtra mantendo a caixa original mas comparando em lowercase
+            df = df[df['E-mail'].str.lower() == user_email.lower()]
+        else:
+            st.warning("Coluna 'E-mail' não encontrada na planilha. Mostrando todos os dados.")
+    
+    return df
 
 def show_main_app():
     """Conteúdo principal após login"""
@@ -128,6 +138,11 @@ def show_main_app():
 
     # Título da página
     st.title("📅 Visualizador de Cronograma")
+
+    if 'user' not in st.session_state or 'Email' not in st.session_state['user']:
+        st.error("Erro: Informações do usuário não encontradas. Faça login novamente.")
+        st.session_state.clear()
+        st.stop()
     
     # Carrega dados filtrados pelo e-mail do usuário
     df = load_data_filtered(st.session_state['user']['Email'])
