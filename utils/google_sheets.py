@@ -114,3 +114,25 @@ def delete_row_in_sheet(url, worksheet_name, row_num):
         worksheet.delete_rows(row_num)
         return True
     return False
+
+def apply_filters(df, filters):
+    """Aplica múltiplos filtros ao DataFrame"""
+    try:
+        filtered_df = df.copy()
+        for col, value in filters.items():
+            if value != "Todos":
+                filtered_df = filtered_df[filtered_df[col].astype(str) == str(value)]
+        return filtered_df
+    except Exception as e:
+        st.error(f"Erro ao aplicar filtros: {str(e)}")
+        return df
+
+def validate_dataframe(df):
+    """Verifica se o DataFrame é válido para filtragem"""
+    if df is None:
+        st.error("Dados não carregados corretamente")
+        return False
+    if df.empty:
+        st.warning("A planilha está vazia")
+        return False
+    return True
