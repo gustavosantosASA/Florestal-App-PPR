@@ -58,3 +58,19 @@ def register_user(url, worksheet_name, user_data):
         user_data['Tipo de Usuário']
     ])
     return True, "Usuário cadastrado com sucesso"
+    
+
+def read_sheet_to_dataframe_filtered(url, worksheet_name, user_email=None):
+    """Lê uma planilha e filtra pelo e-mail do usuário"""
+    worksheet = get_worksheet(url, worksheet_name)
+    if worksheet:
+        # Obter todos os registros
+        records = worksheet.get_all_records()
+        df = pd.DataFrame(records).fillna('')
+        
+        # Filtrar pelo e-mail se fornecido
+        if user_email:
+            df = df[df['E-mail'].str.lower() == user_email.lower()]
+        
+        return df
+    return None
