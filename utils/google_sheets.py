@@ -28,10 +28,33 @@ def get_worksheet(url, worksheet_name):
         st.error(f"Erro ao acessar aba {worksheet_name}: {str(e)}")
         return None
 
-def read_sheet_to_dataframe(url, worksheet_name):
-    """Lê dados da planilha para um DataFrame"""
-    worksheet = get_worksheet(url, worksheet_name)
-    return pd.DataFrame(worksheet.get_all_records()).fillna('') if worksheet else None
+def read_sheet_to_dataframe(url, worksheet_name, user_email=None):
+    """Lê uma planilha e retorna um DataFrame, opcionalmente filtrado por e-mail"""
+    scope = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
+    
+    try:
+        # Usa as credenciais do st.secrets
+        creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        sheet = client.open_by_url(url)
+        worksheet = sheet.worksheet(worksheet_name)
+        records = worksheet.get_all_records()
+        df = pd.DataFrame(records).fillna('')
+        
+        # Filtra por e-mail se fornecido
+        if user_email and 'E-mail' in df.columns:
+            df = df[df['E-mail'].str.lower() == user_email.lower()]
+            
+        return df
+        
+    except Exception as e:
+        st.error(f"Erro ao acessar a planilha: {str(e)}")
+        return None
 
 def get_user_by_login(url, worksheet_name, login):
     """Busca usuário pelo login"""
