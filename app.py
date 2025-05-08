@@ -158,7 +158,7 @@ def show_main_app():
         st.header("Filtros Avançados", divider="rainbow")
         
         # Seleciona apenas colunas relevantes para filtros
-        filter_columns = ['Referência', 'Setor', 'Responsável', 'Status']  # Ajuste conforme suas colunas
+        filter_columns = ['Referência', 'Setor', 'Responsável', 'Descrição Meta']  # Ajuste conforme suas colunas
         
         # Cria filtros dinâmicos
         cols = st.columns(len(filter_columns))
