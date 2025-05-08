@@ -42,22 +42,18 @@ def read_sheet_to_dataframe(url, worksheet_name):
         'https://www.googleapis.com/auth/drive'
     ]
     
-    # Lê as credenciais da variável de ambiente
-    creds_json = os.environ.get('GOOGLE_CREDENTIALS')
-    if not creds_json:
-        raise ValueError("Variável GOOGLE_CREDENTIALS não encontrada!")
-    
-    creds_dict = json.loads(creds_json)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    
     try:
+        # Modificação importante: usar st.secrets em vez de os.environ
+        creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
         sheet = client.open_by_url(url)
         worksheet = sheet.worksheet(worksheet_name)
         records = worksheet.get_all_records()
         return pd.DataFrame(records).fillna('')
     except Exception as e:
-        print(f"Erro ao acessar a planilha: {e}")
+        st.error(f"Erro ao acessar a planilha: {str(e)}")
         return None
 
 def write_dataframe_to_sheet(url, worksheet_name, dataframe):
