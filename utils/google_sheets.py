@@ -90,3 +90,35 @@ def update_row_in_sheet(url, worksheet_name, row_index, new_values):
             worksheet.update_cell(row_index, col, value)
         return True
     return False
+
+# Adicione estas funções ao seu arquivo google_sheets.py
+
+def get_user_by_login(url, worksheet_name, login):
+    """Busca um usuário pelo login"""
+    worksheet = get_worksheet(url, worksheet_name)
+    if worksheet:
+        records = worksheet.get_all_records()
+        for record in records:
+            if record['Login'].lower() == login.lower():
+                return record
+    return None
+
+def register_user(url, worksheet_name, user_data):
+    """Registra um novo usuário"""
+    worksheet = get_worksheet(url, worksheet_name)
+    if worksheet:
+        # Verifica se usuário já existe
+        existing_user = get_user_by_login(url, worksheet_name, user_data['Login'])
+        if existing_user:
+            return False, "Usuário já existe"
+        
+        # Adiciona novo usuário
+        new_row = [
+            user_data['Login'],
+            user_data['Email'],
+            user_data['Senha'],  # Na prática, você deve armazenar hash da senha
+            user_data['Tipo de Usuário']
+        ]
+        worksheet.append_row(new_row)
+        return True, "Usuário cadastrado com sucesso"
+    return False, "Erro ao acessar a planilha"
