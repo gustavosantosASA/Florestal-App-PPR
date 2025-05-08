@@ -134,46 +134,50 @@ def get_filter_options(df, column):
 
 def show_main_app():
     """Conteúdo principal após login"""
-    # Verificação de segurança reforçada
-    if 'user' not in st.session_state or 'Email' not in st.session_state['user']:
+    # Verificação de segurança
+    if 'user' not in st.session_state:
         st.error("Sessão inválida. Redirecionando para login...")
         st.session_state.clear()
         st.rerun()
     
-    # Agora podemos acessar st.session_state['user'] com segurança
     user = st.session_state['user']
     is_admin = user['Tipo de Usuário'] == "Administrador"
-    
-    # Carrega dados com filtro por e-mail se não for admin
     user_email = None if is_admin else user['Email']
-    df = load_data(user_email)
     
     # Carrega dados
-    df = load_data(user['Email'] if not is_admin else None)
+    df = load_data(user_email)
     
-    if df is not None and not df.empty:
-        # ========================================
-        # SEÇÃO DE FILTROS DINÂMICOS
-        # ========================================
-        st.header("Filtros Avançados", divider="rainbow")
-        
-        # Seleciona apenas colunas relevantes para filtros
-        filter_columns = ['Referência', 'Setor', 'Responsável', 'Descrição Meta']  # Ajuste conforme suas colunas
-        
-        # Cria filtros dinâmicos
-        cols = st.columns(len(filter_columns))
-        filters = {}
-        
-        for i, col in enumerate(filter_columns):
-            with cols[i]:
-                filters[col] = st.selectbox(
-                    f"Filtrar por {col}",
-                    options=get_filter_options(df, col),
-                    key=f"filter_{col}"
-                )
-        
-        # Aplica filtros
-        filtered_df = apply_dynamic_filters(df.copy(), filters)
+    if df is None or df.empty:
+        st.warning("Nenhum dado encontrado")
+        return
+    
+    # Define colunas para filtros (ajuste conforme sua planilha)
+    filter_columns = ['Referência', 'Setor', 'Responsável', 'Status']
+    
+    # Seção de filtros
+    st.header("Filtros Avançados", divider="rainbow")
+    filters = create_dynamic_filters(df, filter_columns)
+    
+    # Aplica filtros
+    filtered_df = apply_dynamic_filters(df, filters)
+    
+    # Exibe resultados
+    st.header("Resultados", divider="rainbow")
+    st.subheader(f"📊 Total de registros: {len(filtered_df)}")
+    
+    if not filtered_df.empty:
+        for _, row in filtered_df.iterrows():
+            with st.container(border=True):
+                # Seu código de exibição por card
+                cols = st.columns([4, 1])
+                with cols[0]:
+                    st.markdown(f"**Referência:** `{row['Referência']}`")
+                    st.markdown(f"**Descrição:** {row['Descrição Meta']}")
+                with cols[1]:
+                    if st.button("Editar", key=f"edit_{row.name}"):
+                        handle_edit(row)
+    else:
+        st.warning("Nenhum registro corresponde aos filtros selecionados")
         
         # ========================================
         # EXIBIÇÃO DOS CARDS (CONTAINER APPROACH)
@@ -224,6 +228,43 @@ def show_main_app():
         st.warning("Nenhum registro encontrado na planilha!")
     else:
         st.error("Erro ao carregar dados. Verifique sua conexão.")
+
+def apply_dynamic_filters(df, filters):
+    """Aplica múltiplos filtros ao DataFrame de forma segura"""
+    try:
+        filtered_df = df.copy()
+        for column, value in filters.items():
+            if value != "Todos":
+                # Converte ambos os valores para string para comparação segura
+                filtered_df = filtered_df[filtered_df[column].astype(str) == str(value)]
+        return filtered_df
+    except KeyError as e:
+        st.error(f"Erro: Coluna '{e.args[0]}' não existe na planilha")
+        return df
+    except Exception as e:
+        st.error(f"Erro ao filtrar dados: {str(e)}")
+        return df
+
+def create_dynamic_filters(df, filter_columns):
+    """Cria os controles de filtro dinâmico e retorna os valores selecionados"""
+    filters = {}
+    cols = st.columns(len(filter_columns))
+    
+    for i, column in enumerate(filter_columns):
+        with cols[i]:
+            try:
+                options = ["Todos"] + sorted(df[column].dropna().unique().tolist())
+                filters[column] = st.selectbox(
+                    f"Filtrar por {column}",
+                    options=options,
+                    key=f"filter_{column}"
+                )
+            except KeyError:
+                st.error(f"Coluna '{column}' não encontrada")
+                filters[column] = "Todos"
+    
+    return filters
+
 
 # ==================================================
 # FUNÇÕES DOS MODAIS
