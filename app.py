@@ -110,8 +110,12 @@ def show_register_form():
 # ==================================================
 @st.cache_data(ttl=300)
 def load_data(user_email=None):
-    """Carrega os dados do cronograma"""
-    return read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_DATA, user_email)
+    """Carrega os dados do cronograma com filtro opcional por e-mail"""
+    return read_sheet_to_dataframe(
+        SPREADSHEET_URL, 
+        WORKSHEET_DATA,
+        user_email
+    )
 
 def show_main_app():
     """Conteúdo principal após login"""
