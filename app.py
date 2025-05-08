@@ -4,14 +4,16 @@ import hashlib
 from utils.google_sheets import (
     read_sheet_to_dataframe,
     get_user_by_login,
-    register_user,
-    append_row_to_sheet
+    register_user
 )
 
-# ==================================================
-# CONFIGURAÇÕES
-# ==================================================
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1VZpV97NIhd16jAyzMpVE_8VhSs-bSqi4DXmySsx2Kc4/edit#gid=761491838"
+# Verificação inicial
+if 'GOOGLE_CREDENTIALS' not in st.secrets:
+    st.error("Credenciais do Google não configuradas!")
+    st.stop()
+
+# Configurações
+SPREADSHEET_URL = st.secrets.get("SPREADSHEET_URL", "https://docs.google.com/spreadsheets/d/1VZpV97NIhd16jAyzMpVE_8VhSs-bSqi4DXmySsx2Kc4/edit")
 WORKSHEET_DATA = "Cronograma"
 WORKSHEET_USERS = "Usuários"
 
