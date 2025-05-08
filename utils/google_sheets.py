@@ -1,6 +1,9 @@
+import os
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
+
 
 def get_google_sheet_by_url(url):
     """Conecta ao Google Sheets usando a URL e retorna a planilha"""
@@ -32,14 +35,20 @@ def get_worksheet(url, worksheet_name):
             return None
     return None
 
+
 def read_sheet_to_dataframe(url, worksheet_name):
     scope = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
     
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        'credentials/service_account.json', scope)
+    # Lê as credenciais da variável de ambiente
+    creds_json = os.environ.get('GOOGLE_CREDENTIALS')
+    if not creds_json:
+        raise ValueError("Variável GOOGLE_CREDENTIALS não encontrada!")
+    
+    creds_dict = json.loads(creds_json)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     
     try:
