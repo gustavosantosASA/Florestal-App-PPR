@@ -1,129 +1,251 @@
 import streamlit as st
 import pandas as pd
-from utils.google_sheets import read_sheet_to_dataframe
+import hashlib
+from utils.google_sheets import (
+    read_sheet_to_dataframe,
+    get_user_by_login,
+    register_user,
+    append_row_to_sheet
+)
 
-# Configurações
+# ==================================================
+# CONFIGURAÇÕES
+# ==================================================
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1VZpV97NIhd16jAyzMpVE_8VhSs-bSqi4DXmySsx2Kc4/edit#gid=761491838"
-WORKSHEET_NAME = "Cronograma"
+WORKSHEET_DATA = "Cronograma"
+WORKSHEET_USERS = "Usuários"
 
 # Configuração da página
-st.set_page_config(page_title="Visualizador de Cronograma", layout="wide")
-st.title("📅 Visualizador de Cronograma")
+st.set_page_config(
+    page_title="Sistema de Cronograma", 
+    layout="wide",
+    page_icon="🔒"
+)
 
-# Carrega os dados
+# ==================================================
+# FUNÇÕES DE AUTENTICAÇÃO
+# ==================================================
+def hash_password(password):
+    """Cria hash SHA-256 da senha"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def check_login(login, password):
+    """Verifica se usuário existe e a senha está correta"""
+    user = get_user_by_login(SPREADSHEET_URL, WORKSHEET_USERS, login)
+    if user and user['Senha'] == hash_password(password):
+        return True, user
+    return False, None
+
+def show_login_form():
+    """Formulário de login"""
+    st.title("🔒 Acesso ao Sistema")
+    
+    with st.form("login_form"):
+        login = st.text_input("Login")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        
+        if submitted:
+            if not login or not password:
+                st.error("Preencha todos os campos!")
+            else:
+                success, user = check_login(login, password)
+                if success:
+                    st.session_state['logged_in'] = True
+                    st.session_state['user'] = user
+                    st.rerun()
+                else:
+                    st.error("Credenciais inválidas!")
+    
+    # Link para cadastro
+    if st.button("📝 Criar nova conta"):
+        st.session_state['show_register'] = True
+        st.rerun()
+
+def show_register_form():
+    """Formulário de cadastro"""
+    st.title("📝 Cadastro de Usuário")
+    
+    with st.form("register_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            login = st.text_input("Login*")
+            password = st.text_input("Senha*", type="password")
+        with col2:
+            email = st.text_input("Email*")
+            confirm_password = st.text_input("Confirmar Senha*", type="password")
+        
+        user_type = st.selectbox("Tipo de Usuário", ["Usuário", "Administrador"])
+        
+        submitted = st.form_submit_button("Cadastrar")
+        
+        if submitted:
+            if not all([login, email, password, confirm_password]):
+                st.error("Preencha todos os campos obrigatórios!")
+            elif password != confirm_password:
+                st.error("As senhas não coincidem!")
+            elif len(password) < 6:
+                st.error("A senha deve ter pelo menos 6 caracteres")
+            else:
+                user_data = {
+                    'Login': login,
+                    'Email': email,
+                    'Senha': hash_password(password),  # Armazena o hash
+                    'Tipo de Usuário': user_type
+                }
+                success, message = register_user(SPREADSHEET_URL, WORKSHEET_USERS, user_data)
+                if success:
+                    st.success("Cadastro realizado! Faça login.")
+                    st.session_state['show_register'] = False
+                    st.rerun()
+                else:
+                    st.error(message)
+    
+    if st.button("⬅️ Voltar para Login"):
+        st.session_state['show_register'] = False
+        st.rerun()
+
+# ==================================================
+# FUNÇÕES PRINCIPAIS DO SISTEMA
+# ==================================================
 @st.cache_data(ttl=300)
 def load_data():
-    return read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_NAME)
+    """Carrega os dados do cronograma"""
+    return read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_DATA)
 
-df = load_data()
+def show_main_app():
+    """Conteúdo principal após login"""
+    # Barra superior com informações do usuário
+    st.sidebar.title(f"👋 Olá, {st.session_state['user']['Login']}!")
+    st.sidebar.write(f"Tipo: {st.session_state['user']['Tipo de Usuário']}")
+    if st.sidebar.button("🚪 Sair"):
+        st.session_state.clear()
+        st.rerun()
+    
+    # Título da página
+    st.title("📅 Visualizador de Cronograma")
+    
+    # Carrega dados
+    df = load_data()
+    
+    if df is not None:
+        # --- SEÇÃO DE FILTROS DINÂMICOS ---
+        st.header("Filtros", divider="rainbow")
+        
+        # Função auxiliar para opções de filtro
+        def get_filter_options(column, base_df):
+            options = base_df[column].unique()
+            return ["Todos"] + sorted(filter(None, set(str(x) for x in options)))
+        
+        # Layout dos filtros (3 colunas)
+        col1, col2, col3 = st.columns(3)
+        
+        # Dicionário para armazenar seleções
+        selections = {}
+        
+        with col1:
+            selections['Referência'] = st.selectbox(
+                "Referência",
+                options=get_filter_options('Referência', df),
+                index=0
+            )
+            
+            temp_df = df[df['Referência'] == selections['Referência']] if selections['Referência'] != "Todos" else df
+            selections['Setor'] = st.selectbox(
+                "Setor",
+                options=get_filter_options('Setor', temp_df),
+                index=0
+            )
 
-if df is not None:
-    # --- SEÇÃO DE FILTROS DINÂMICOS ---
-    st.header("Filtros", divider="rainbow")
-    
-    # Função auxiliar para opções de filtro
-    def get_filter_options(column, base_df):
-        options = base_df[column].unique()
-        return ["Todos"] + sorted(filter(None, set(str(x) for x in options)))
+        with col2:
+            if selections['Setor'] != "Todos":
+                temp_df = temp_df[temp_df['Setor'] == selections['Setor']]
+            
+            selections['Responsável'] = st.selectbox(
+                "Responsável",
+                options=get_filter_options('Responsável', temp_df),
+                index=0
+            )
+            
+            if selections['Responsável'] != "Todos":
+                temp_df = temp_df[temp_df['Responsável'] == selections['Responsável']]
+            
+            selections['Descrição Meta'] = st.selectbox(
+                "Descrição Meta",
+                options=get_filter_options('Descrição Meta', temp_df),
+                index=0
+            )
 
-    # Layout dos filtros (3 colunas)
-    col1, col2, col3 = st.columns(3)
-    
-    # Dicionário para armazenar seleções
-    selections = {}
-    
-    with col1:
-        # Filtro de Referência
-        selections['Referência'] = st.selectbox(
-            "Referência",
-            options=get_filter_options('Referência', df),
-            index=0
+        with col3:
+            if selections['Descrição Meta'] != "Todos":
+                temp_df = temp_df[temp_df['Descrição Meta'] == selections['Descrição Meta']]
+            
+            selections['Responsável Área'] = st.selectbox(
+                "Responsável Área",
+                options=get_filter_options('Responsável Área', temp_df),
+                index=0
+            )
+            
+            if selections['Responsável Área'] != "Todos":
+                temp_df = temp_df[temp_df['Responsável Área'] == selections['Responsável Área']]
+            
+            selections['E-mail'] = st.selectbox(
+                "E-mail",
+                options=get_filter_options('E-mail', temp_df),
+                index=0
+            )
+
+        # --- APLICA FILTROS ---
+        filtered_df = df.copy()
+        for col, val in selections.items():
+            if val != "Todos":
+                filtered_df = filtered_df[filtered_df[col] == val]
+        
+        # --- EXIBIÇÃO DOS RESULTADOS ---
+        st.header("Resultados", divider="rainbow")
+        st.subheader(f"📊 Total de registros: {len(filtered_df)}")
+        
+        # Tabela com dados
+        st.dataframe(
+            filtered_df,
+            height=600,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                'Referência': st.column_config.TextColumn(width="medium"),
+                'Descrição Meta': st.column_config.TextColumn(width="large"),
+                'E-mail': st.column_config.TextColumn(width="medium")
+            }
         )
         
-        # Filtro de Setor (dinâmico)
-        temp_df = df[df['Referência'] == selections['Referência']] if selections['Referência'] != "Todos" else df
-        selections['Setor'] = st.selectbox(
-            "Setor",
-            options=get_filter_options('Setor', temp_df),
-            index=0
-        )
+        if filtered_df.empty:
+            st.warning("Nenhum registro encontrado com os filtros selecionados!")
 
-    with col2:
-        # Filtro de Responsável (dinâmico)
-        if selections['Setor'] != "Todos":
-            temp_df = temp_df[temp_df['Setor'] == selections['Setor']]
-        
-        selections['Responsável'] = st.selectbox(
-            "Responsável",
-            options=get_filter_options('Responsável', temp_df),
-            index=0
-        )
-        
-        # Filtro de Descrição Meta (dinâmico)
-        if selections['Responsável'] != "Todos":
-            temp_df = temp_df[temp_df['Responsável'] == selections['Responsável']]
-        
-        selections['Descrição Meta'] = st.selectbox(
-            "Descrição Meta",
-            options=get_filter_options('Descrição Meta', temp_df),
-            index=0
-        )
+    elif df is not None and df.empty:
+        st.warning("A planilha está vazia!")
+    else:
+        st.error("❌ Erro ao carregar dados. Verifique sua conexão.")
 
-    with col3:
-        # Filtro de Responsável Área (dinâmico)
-        if selections['Descrição Meta'] != "Todos":
-            temp_df = temp_df[temp_df['Descrição Meta'] == selections['Descrição Meta']]
-        
-        selections['Responsável Área'] = st.selectbox(
-            "Responsável Área",
-            options=get_filter_options('Responsável Área', temp_df),
-            index=0
-        )
-        
-        # Filtro de E-mail (dinâmico)
-        if selections['Responsável Área'] != "Todos":
-            temp_df = temp_df[temp_df['Responsável Área'] == selections['Responsável Área']]
-        
-        selections['E-mail'] = st.selectbox(
-            "E-mail",
-            options=get_filter_options('E-mail', temp_df),
-            index=0
-        )
-
-    # --- APLICA FILTROS ---
-    filtered_df = df.copy()
-    for col, val in selections.items():
-        if val != "Todos":
-            filtered_df = filtered_df[filtered_df[col] == val]
+# ==================================================
+# PONTO DE ENTRADA DA APLICAÇÃO
+# ==================================================
+def main():
+    # Inicializa estado da sessão
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+    if 'show_register' not in st.session_state:
+        st.session_state['show_register'] = False
+    if 'user' not in st.session_state:
+        st.session_state['user'] = None
     
-    # --- EXIBIÇÃO DOS RESULTADOS ---
-    st.header("Resultados", divider="rainbow")
-    st.subheader(f"🚀 Total de registros encontrados: {len(filtered_df)}")
-    
-    # Estilização do DataFrame
-    st.dataframe(
-        filtered_df,
-        height=600,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            'Referência': st.column_config.TextColumn(width="medium"),
-            'Descrição Meta': st.column_config.TextColumn(width="large"),
-            'E-mail': st.column_config.TextColumn(width="medium")
-        }
-    )
-    
-    # Mensagem alternativa se não houver resultados
-    if filtered_df.empty:
-        st.warning("Nenhum registro encontrado com os filtros selecionados!")
+    # Controle de fluxo
+    if not st.session_state['logged_in']:
+        if st.session_state['show_register']:
+            show_register_form()
+        else:
+            show_login_form()
+    else:
+        show_main_app()
 
-elif df is not None and df.empty:
-    st.warning("A planilha está vazia!")
-else:
-    st.error("❌ Falha ao carregar os dados. Verifique:")
-    st.markdown("""
-    - Conexão com a internet
-    - Permissões da planilha
-    - Nome correto da aba ('Cronograma')
-    - Configuração do service account
-    """)
+if __name__ == "__main__":
+    main()
