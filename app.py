@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import hashlib
 from utils.google_sheets import (
     read_sheet_to_dataframe,
     get_user_by_login,
@@ -23,32 +24,100 @@ st.set_page_config(
 )
 
 # ==================================================
-# FUNÇÕES AUXILIARES
+# FUNÇÕES DE AUTENTICAÇÃO
 # ==================================================
-def apply_dynamic_filters(df, filters):
-    """Aplica filtros dinâmicos ao DataFrame"""
-    for column, value in filters.items():
-        if value != "Todos":
-            df = df[df[column] == value]
-    return df
+def hash_password(password):
+    """Cria hash SHA-256 da senha"""
+    return hashlib.sha256(password.encode()).hexdigest()
 
-def get_filter_options(df, column):
-    """Gera opções para os filtros dinâmicos"""
-    options = ["Todos"] + sorted(df[column].dropna().unique().tolist())
-    return [str(x) for x in options if x]
+def check_login(login, password):
+    """Verifica as credenciais do usuário"""
+    user = get_user_by_login(SPREADSHEET_URL, WORKSHEET_USERS, login)
+    if user and user['Senha'] == hash_password(password):
+        return True, user
+    return False, None
+
+def show_login_form():
+    """Exibe o formulário de login"""
+    st.title("🔒 Acesso ao Sistema")
+    
+    with st.form("login_form"):
+        login = st.text_input("Login")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        
+        if submitted:
+            if not login or not password:
+                st.error("Preencha todos os campos!")
+            else:
+                success, user = check_login(login, password)
+                if success:
+                    st.session_state['logged_in'] = True
+                    st.session_state['user'] = user
+                    st.rerun()
+                else:
+                    st.error("Login ou senha incorretos!")
+    
+    if st.button("Não tem conta? Cadastre-se"):
+        st.session_state['show_register'] = True
+        st.rerun()
+
+def show_register_form():
+    """Exibe o formulário de cadastro"""
+    st.title("📝 Cadastro de Usuário")
+    
+    with st.form("register_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            login = st.text_input("Login*")
+            password = st.text_input("Senha*", type="password")
+        with col2:
+            email = st.text_input("Email*")
+            confirm_password = st.text_input("Confirmar Senha*", type="password")
+        
+        user_type = st.selectbox("Tipo de Usuário", ["Usuário", "Administrador"])
+        
+        submitted = st.form_submit_button("Cadastrar")
+        
+        if submitted:
+            if not all([login, email, password, confirm_password]):
+                st.error("Preencha todos os campos obrigatórios!")
+            elif password != confirm_password:
+                st.error("As senhas não coincidem!")
+            elif len(password) < 6:
+                st.error("A senha deve ter pelo menos 6 caracteres")
+            else:
+                user_data = {
+                    'Login': login,
+                    'Email': email,
+                    'Senha': hash_password(password),
+                    'Tipo de Usuário': user_type
+                }
+                success, message = register_user(SPREADSHEET_URL, WORKSHEET_USERS, user_data)
+                if success:
+                    st.success("Cadastro realizado! Faça login.")
+                    st.session_state['show_register'] = False
+                    st.rerun()
+                else:
+                    st.error(message)
+    
+    if st.button("Voltar para Login"):
+        st.session_state['show_register'] = False
+        st.rerun()
 
 # ==================================================
-# INTERFACE PRINCIPAL
+# FUNÇÕES PRINCIPAIS DO SISTEMA
 # ==================================================
+@st.cache_data(ttl=300)
+def load_data(user_email=None):
+    """Carrega os dados do cronograma"""
+    return read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_DATA, user_email)
+
 def show_main_app():
     """Conteúdo principal após login"""
-    # Configurações de usuário
-    user = st.session_state['user']
-    is_admin = user['Tipo de Usuário'] == "Administrador"
-    
-    # Barra lateral
-    st.sidebar.title(f"👤 {user['Login']}")
-    st.sidebar.write(f"Tipo: {user['Tipo de Usuário']}")
+    # Barra superior com informações do usuário
+    st.sidebar.title(f"👋 Olá, {st.session_state['user']['Login']}!")
+    st.sidebar.write(f"Tipo: {st.session_state['user']['Tipo de Usuário']}")
     if st.sidebar.button("🚪 Sair"):
         st.session_state.clear()
         st.rerun()
@@ -212,11 +281,14 @@ def show_details_modal(row):
 # PONTO DE ENTRADA
 # ==================================================
 def main():
+    """Função principal que controla o fluxo da aplicação"""
+    # Inicializa variáveis de sessão
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
     if 'show_register' not in st.session_state:
         st.session_state['show_register'] = False
     
+    # Controle de fluxo
     if not st.session_state['logged_in']:
         if st.session_state['show_register']:
             show_register_form()
