@@ -136,6 +136,19 @@ def show_main_app():
         st.session_state.clear()
         st.rerun()
 
+       # Verifica se é administrador
+    is_admin = st.session_state['user']['Tipo de Usuário'] == "Administrador"
+    
+    # Exibe mensagem de contexto
+    if is_admin:
+        st.success("🔧 Modo Administrador: Visualizando todos os registros")
+        # Administradores veem todos os dados
+        df = load_data()
+    else:
+        st.info(f"👤 Visualizando apenas seus registros (E-mail: {st.session_state['user']['Email']})")
+        # Usuários normais veem apenas seus registros
+        df = load_data_filtered(st.session_state['user']['Email'])
+
     # Título da página
     st.title("📅 Visualizador de Cronograma")
 
