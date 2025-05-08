@@ -4,16 +4,15 @@ import hashlib
 from utils.google_sheets import (
     read_sheet_to_dataframe,
     get_user_by_login,
-    register_user
+    register_user,
+    update_row_in_sheet,
+    delete_row_in_sheet
 )
 
-# Verificação inicial
-if 'GOOGLE_CREDENTIALS' not in st.secrets:
-    st.error("Credenciais do Google não configuradas!")
-    st.stop()
-
-# Configurações
-SPREADSHEET_URL = st.secrets.get("SPREADSHEET_URL", "https://docs.google.com/spreadsheets/d/1VZpV97NIhd16jAyzMpVE_8VhSs-bSqi4DXmySsx2Kc4/edit")
+# ==================================================
+# CONFIGURAÇÕES
+# ==================================================
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1VZpV97NIhd16jAyzMpVE_8VhSs-bSqi4DXmySsx2Kc4/edit#gid=761491838"
 WORKSHEET_DATA = "Cronograma"
 WORKSHEET_USERS = "Usuários"
 
@@ -21,27 +20,23 @@ WORKSHEET_USERS = "Usuários"
 st.set_page_config(
     page_title="Sistema de Cronograma", 
     layout="wide",
-    page_icon="🔒"
+    page_icon="📅"
 )
 
 # ==================================================
-# FUNÇÕES DE AUTENTICAÇÃO
+# FUNÇÕES DE AUTENTICAÇÃO (MANTIDAS)
 # ==================================================
 def hash_password(password):
-    """Cria hash SHA-256 da senha"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def check_login(login, password):
-    """Verifica se usuário existe e a senha está correta"""
     user = get_user_by_login(SPREADSHEET_URL, WORKSHEET_USERS, login)
     if user and user['Senha'] == hash_password(password):
         return True, user
     return False, None
 
 def show_login_form():
-    """Formulário de login"""
     st.title("🔒 Acesso ao Sistema")
-    
     with st.form("login_form"):
         login = st.text_input("Login")
         password = st.text_input("Senha", type="password")
@@ -59,15 +54,12 @@ def show_login_form():
                 else:
                     st.error("Credenciais inválidas!")
     
-    # Link para cadastro
     if st.button("📝 Criar nova conta"):
         st.session_state['show_register'] = True
         st.rerun()
 
 def show_register_form():
-    """Formulário de cadastro"""
     st.title("📝 Cadastro de Usuário")
-    
     with st.form("register_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -92,7 +84,7 @@ def show_register_form():
                 user_data = {
                     'Login': login,
                     'Email': email,
-                    'Senha': hash_password(password),  # Armazena o hash
+                    'Senha': hash_password(password),
                     'Tipo de Usuário': user_type
                 }
                 success, message = register_user(SPREADSHEET_URL, WORKSHEET_USERS, user_data)
@@ -108,169 +100,139 @@ def show_register_form():
         st.rerun()
 
 # ==================================================
-# FUNÇÕES PRINCIPAIS DO SISTEMA
+# FUNÇÕES PRINCIPAIS (COM CONTAINER APPROACH)
 # ==================================================
 @st.cache_data(ttl=300)
-def load_data_filtered(user_email=None):
-    """Carrega os dados do cronograma com filtro por e-mail"""
+def load_data(user_email=None):
     df = read_sheet_to_dataframe(SPREADSHEET_URL, WORKSHEET_DATA)
-    
-    if df is not None and user_email:
-        # Verifica se a coluna 'E-mail' existe
-        if 'E-mail' in df.columns:
-            # Filtra mantendo a caixa original mas comparando em lowercase
-            df = df[df['E-mail'].str.lower() == user_email.lower()]
-        else:
-            st.warning("Coluna 'E-mail' não encontrada na planilha. Mostrando todos os dados.")
-    
+    if df is not None and user_email and 'E-mail' in df.columns:
+        df = df[df['E-mail'].str.lower() == user_email.lower()]
     return df
+
+def show_row_actions(row):
+    """Mostra botões de ação para cada linha"""
+    cols = st.columns([1, 1, 2])
+    with cols[0]:
+        if st.button("📝 Editar", key=f"edit_{row.name}"):
+            st.session_state['editing_row'] = row.to_dict()
+    with cols[1]:
+        if st.button("🗑️ Excluir", key=f"delete_{row.name}"):
+            st.session_state['deleting_row'] = row.to_dict()
+    with cols[2]:
+        if st.button("🔍 Detalhes", key=f"details_{row.name}"):
+            st.session_state['viewing_row'] = row.to_dict()
+
+def show_row_details(row):
+    """Mostra detalhes expandidos de uma linha"""
+    with st.expander(f"Detalhes: {row['Referência']}", expanded=True):
+        st.json(row.to_dict())
+
+def handle_edit(row_data):
+    """Lógica para edição de registro"""
+    with st.form(f"edit_form_{row_data['Referência']}"):
+        st.write("### Editar Registro")
+        
+        # Crie campos de edição para cada coluna necessária
+        referencia = st.text_input("Referência", value=row_data['Referência'])
+        descricao = st.text_area("Descrição", value=row_data['Descrição Meta'])
+        
+        if st.form_submit_button("Salvar Alterações"):
+            try:
+                # Atualize a planilha (implemente esta função no google_sheets.py)
+                updated = update_row_in_sheet(
+                    SPREADSHEET_URL,
+                    WORKSHEET_DATA,
+                    row_data.name + 2,  # +2 porque a planilha começa na linha 1 e tem cabeçalho
+                    [referencia, descricao]  # Ajuste conforme suas colunas
+                )
+                if updated:
+                    st.success("Registro atualizado!")
+                    st.cache_data.clear()
+                    del st.session_state['editing_row']
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao atualizar: {str(e)}")
+
+def handle_delete(row_data):
+    """Lógica para exclusão de registro"""
+    st.warning(f"Tem certeza que deseja excluir: {row_data['Referência']}?")
+    if st.button("✅ Confirmar Exclusão", key=f"confirm_del_{row_data.name}"):
+        try:
+            # Implemente delete_row_in_sheet no google_sheets.py
+            deleted = delete_row_in_sheet(
+                SPREADSHEET_URL,
+                WORKSHEET_DATA,
+                row_data.name + 2  # +2 pela mesma razão acima
+            )
+            if deleted:
+                st.success("Registro excluído!")
+                st.cache_data.clear()
+                del st.session_state['deleting_row']
+                st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao excluir: {str(e)}")
 
 def show_main_app():
     """Conteúdo principal após login"""
-    # Barra superior com informações do usuário
-    st.sidebar.title(f"👋 Olá, {st.session_state['user']['Login']}!")
-    st.sidebar.write(f"E-mail: {st.session_state['user']['Email']}")
+    # Barra lateral
+    st.sidebar.title(f"👤 {st.session_state['user']['Login']}")
     st.sidebar.write(f"Tipo: {st.session_state['user']['Tipo de Usuário']}")
-    
     if st.sidebar.button("🚪 Sair"):
         st.session_state.clear()
         st.rerun()
-
-       # Verifica se é administrador
-    is_admin = st.session_state['user']['Tipo de Usuário'] == "Administrador"
     
-    # Exibe mensagem de contexto
+    # Verifica se é admin
+    is_admin = st.session_state['user']['Tipo de Usuário'] == "Administrador"
+    user_email = None if is_admin else st.session_state['user']['Email']
+    
+    # Título e filtros
+    st.title("📅 Visualizador de Cronograma")
     if is_admin:
         st.success("🔧 Modo Administrador: Visualizando todos os registros")
-        # Administradores veem todos os dados
-        df = load_data()
     else:
-        st.info(f"👤 Visualizando apenas seus registros (E-mail: {st.session_state['user']['Email']})")
-        # Usuários normais veem apenas seus registros
-        df = load_data_filtered(st.session_state['user']['Email'])
-
-    # Título da página
-    st.title("📅 Visualizador de Cronograma")
-
-    if 'user' not in st.session_state or 'Email' not in st.session_state['user']:
-        st.error("Erro: Informações do usuário não encontradas. Faça login novamente.")
-        st.session_state.clear()
-        st.stop()
+        st.info(f"👤 Visualizando apenas seus registros")
     
-    # Carrega dados filtrados pelo e-mail do usuário
-    df = load_data_filtered(st.session_state['user']['Email'])
+    # Carrega dados filtrados
+    df = load_data(user_email)
     
-    if df is not None:
-        # --- SEÇÃO DE FILTROS DINÂMICOS ---
-        st.header("Filtros", divider="rainbow")
+    if df is not None and not df.empty:
+        # Mostra cada registro como um card
+        for idx, row in df.iterrows():
+            with st.container(border=True):
+                cols = st.columns([4, 1])
+                with cols[0]:
+                    st.markdown(f"**Referência:** `{row['Referência']}`")
+                    st.markdown(f"**Descrição:** {row['Descrição Meta']}")
+                    st.markdown(f"**Responsável:** {row['Responsável']}")
+                    st.markdown(f"**Status:** {row.get('Status', 'N/A')}")
+                
+                with cols[1]:
+                    show_row_actions(row)
         
-        # Função auxiliar para opções de filtro
-        def get_filter_options(column, base_df):
-            options = base_df[column].unique()
-            return ["Todos"] + sorted(filter(None, set(str(x) for x in options)))
-        
-        # Layout dos filtros (3 colunas)
-        col1, col2, col3 = st.columns(3)
-        
-        # Dicionário para armazenar seleções
-        selections = {}
-        
-        with col1:
-            selections['Referência'] = st.selectbox(
-                "Referência",
-                options=get_filter_options('Referência', df),
-                index=0
-            )
+        # Trata ações
+        if 'editing_row' in st.session_state:
+            handle_edit(pd.Series(st.session_state['editing_row']))
             
-            temp_df = df[df['Referência'] == selections['Referência']] if selections['Referência'] != "Todos" else df
-            selections['Setor'] = st.selectbox(
-                "Setor",
-                options=get_filter_options('Setor', temp_df),
-                index=0
-            )
-
-        with col2:
-            if selections['Setor'] != "Todos":
-                temp_df = temp_df[temp_df['Setor'] == selections['Setor']]
+        if 'deleting_row' in st.session_state:
+            handle_delete(pd.Series(st.session_state['deleting_row']))
             
-            selections['Responsável'] = st.selectbox(
-                "Responsável",
-                options=get_filter_options('Responsável', temp_df),
-                index=0
-            )
-            
-            if selections['Responsável'] != "Todos":
-                temp_df = temp_df[temp_df['Responsável'] == selections['Responsável']]
-            
-            selections['Descrição Meta'] = st.selectbox(
-                "Descrição Meta",
-                options=get_filter_options('Descrição Meta', temp_df),
-                index=0
-            )
-
-        with col3:
-            if selections['Descrição Meta'] != "Todos":
-                temp_df = temp_df[temp_df['Descrição Meta'] == selections['Descrição Meta']]
-            
-            selections['Responsável Área'] = st.selectbox(
-                "Responsável Área",
-                options=get_filter_options('Responsável Área', temp_df),
-                index=0
-            )
-            
-            if selections['Responsável Área'] != "Todos":
-                temp_df = temp_df[temp_df['Responsável Área'] == selections['Responsável Área']]
-            
-            selections['E-mail'] = st.selectbox(
-                "E-mail",
-                options=get_filter_options('E-mail', temp_df),
-                index=0
-            )
-
-        # --- APLICA FILTROS ---
-        filtered_df = df.copy()
-        for col, val in selections.items():
-            if val != "Todos":
-                filtered_df = filtered_df[filtered_df[col] == val]
-        
-        # --- EXIBIÇÃO DOS RESULTADOS ---
-        st.header("Resultados", divider="rainbow")
-        st.subheader(f"📊 Total de registros: {len(filtered_df)}")
-        
-        # Tabela com dados
-        st.dataframe(
-            filtered_df,
-            height=600,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                'Referência': st.column_config.TextColumn(width="medium"),
-                'Descrição Meta': st.column_config.TextColumn(width="large"),
-                'E-mail': st.column_config.TextColumn(width="medium")
-            }
-        )
-        
-        if filtered_df.empty:
-            st.warning("Nenhum registro encontrado com os filtros selecionados!")
-
+        if 'viewing_row' in st.session_state:
+            show_row_details(pd.Series(st.session_state['viewing_row']))
+    
     elif df is not None and df.empty:
-        st.warning("A planilha está vazia!")
+        st.warning("Nenhum registro encontrado!")
     else:
-        st.error("❌ Erro ao carregar dados. Verifique sua conexão.")
+        st.error("Erro ao carregar dados. Verifique sua conexão.")
 
 # ==================================================
-# PONTO DE ENTRADA DA APLICAÇÃO
+# PONTO DE ENTRADA
 # ==================================================
 def main():
-    # Inicializa estado da sessão
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
     if 'show_register' not in st.session_state:
         st.session_state['show_register'] = False
-    if 'user' not in st.session_state:
-        st.session_state['user'] = None
     
-    # Controle de fluxo
     if not st.session_state['logged_in']:
         if st.session_state['show_register']:
             show_register_form()
