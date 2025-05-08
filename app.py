@@ -117,6 +117,21 @@ def load_data(user_email=None):
         user_email
     )
 
+def get_filter_options(df, column):
+    """Gera opções para os filtros dinâmicos incluindo 'Todos'"""
+    try:
+        # Remove valores nulos e duplicados, converte para string e ordena
+        unique_values = df[column].dropna().unique()
+        options = ["Todos"] + sorted([str(x) for x in unique_values if x not in [None, "", " "]])
+        return options
+    except KeyError:
+        st.error(f"Coluna '{column}' não encontrada na planilha")
+        return ["Todos"]
+    except Exception as e:
+        st.error(f"Erro ao gerar opções para {column}: {str(e)}")
+        return ["Todos"]
+
+
 def show_main_app():
     """Conteúdo principal após login"""
     # Verificação de segurança reforçada
