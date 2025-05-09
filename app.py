@@ -122,11 +122,28 @@ def load_data(user_email=None):
         df['_original_index'] = df.index
     return df
 
-def get_filter_options(df, column):
-    """Gera opções para os filtros dinâmicos incluindo 'Todos'"""
+def get_filter_options(df, column, previous_filters=None):
+    """
+    Gera opções para os filtros dinâmicos incluindo 'Todos',
+    considerando os filtros já aplicados
+    """
     try:
-        # Remove valores nulos e duplicados
-        unique_values = df[column].dropna().unique()
+        # Se houver filtros anteriores, aplica-os para filtrar o dataframe
+        filtered_df = df.copy()
+        if previous_filters:
+            for col, val in previous_filters.items():
+                if val != "Todos" and col in filtered_df.columns:
+                    if col == 'Descrição Meta':
+                        # Para Descrição Meta, remove a parte "..." se estiver presente
+                        search_value = str(val).replace("...", "")
+                        # Usa busca por substring (contém) em vez de igualdade exata
+                        filtered_df = filtered_df[filtered_df[col].astype(str).str.contains(search_value, case=False, na=False)]
+                    else:
+                        # Para outros campos, mantém a comparação de igualdade exata
+                        filtered_df = filtered_df[filtered_df[col].astype(str) == str(val)]
+        
+        # Remove valores nulos e duplicados do dataframe filtrado
+        unique_values = filtered_df[column].dropna().unique()
         
         # Tratamento especial para Descrição Meta - truncar textos longos
         if column == 'Descrição Meta':
@@ -149,18 +166,53 @@ def get_filter_options(df, column):
         return ["Todos"]
 
 def create_dynamic_filters(df, filter_columns):
-    """Cria os controles de filtro dinâmico e retorna os valores selecionados"""
+    """
+    Cria os controles de filtro dinâmico e retorna os valores selecionados
+    Filtros são interligados e afetam as opções uns dos outros
+    """
     filters = {}
-    cols = st.columns(len(filter_columns))
+    col_objects = st.columns(len(filter_columns))
+
+    # Inicializando o estado dos filtros se não existir
+    if 'filter_state' not in st.session_state:
+        st.session_state['filter_state'] = {col: "Todos" for col in filter_columns}
     
+    # Função para atualizar o estado quando um filtro é alterado
+    def on_filter_change(column):
+        # Atualiza o valor no estado da sessão
+        st.session_state['filter_state'][column] = st.session_state[f"filter_{column}"]
+        # Reseta os filtros posteriores para evitar seleções inválidas
+        for i, col in enumerate(filter_columns):
+            if filter_columns.index(column) < i:
+                st.session_state['filter_state'][col] = "Todos"
+                st.session_state[f"filter_{col}"] = "Todos"
+    
+    # Cria os filtros em ordem
     for i, column in enumerate(filter_columns):
-        with cols[i]:
+        with col_objects[i]:
             try:
-                options = get_filter_options(df, column)
+                # Obtém as opções considerando os filtros anteriores
+                previous_filters = {
+                    col: st.session_state['filter_state'][col] 
+                    for col in filter_columns[:i]
+                    if st.session_state['filter_state'][col] != "Todos"
+                }
+                
+                options = get_filter_options(df, column, previous_filters)
+                
+                # Se o valor atual não está nas opções, reseta para "Todos"
+                current_value = st.session_state['filter_state'][column]
+                if current_value not in options:
+                    current_value = "Todos"
+                    st.session_state['filter_state'][column] = "Todos"
+                
+                # Cria o selectbox com as opções filtradas
                 filters[column] = st.selectbox(
                     f"Filtrar por {column}",
                     options=options,
-                    key=f"filter_{column}"
+                    key=f"filter_{column}",
+                    on_change=lambda col=column: on_filter_change(col),
+                    index=options.index(current_value) if current_value in options else 0
                 )
             except KeyError:
                 st.error(f"Coluna '{column}' não encontrada")
@@ -344,7 +396,7 @@ def show_main_app():
         st.warning("Nenhum dado encontrado na planilha.")
         return
     
-    # Define colunas para filtros (ajuste conforme sua planilha)
+    # Define colunas para filtros (substituindo Status por Descrição Meta)
     filter_columns = ['Referência', 'Setor', 'Responsável', 'Descrição Meta']
     
     # Seção de filtros
