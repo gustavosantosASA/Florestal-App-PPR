@@ -30,39 +30,33 @@ def get_worksheet(url, worksheet_name):
 
 def read_sheet_to_dataframe(url, worksheet_name, user_email=None):
     """Lê uma planilha e retorna um DataFrame, opcionalmente filtrado por e-mail"""
-    scope = [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-    ]
-    
-    try:
-        # Usa as credenciais do st.secrets
-        creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        
-        sheet = client.open_by_url(url)
-        worksheet = sheet.worksheet(worksheet_name)
-        records = worksheet.get_all_records()
-        df = pd.DataFrame(records).fillna('')
-        
-        # Filtra por e-mail se fornecido
-        if user_email and 'E-mail' in df.columns:
-            df = df[df['E-mail'].str.lower() == user_email.lower()]
+    worksheet = get_worksheet(url, worksheet_name)
+    if worksheet:
+        try:
+            # Obter todos os registros
+            records = worksheet.get_all_records()
+            df = pd.DataFrame(records).fillna('')
             
-        return df
-        
-    except Exception as e:
-        st.error(f"Erro ao acessar a planilha: {str(e)}")
-        return None
+            # Filtrar pelo e-mail se fornecido
+            if user_email and 'E-mail' in df.columns:
+                df = df[df['E-mail'].str.lower() == user_email.lower()]
+            
+            return df
+        except Exception as e:
+            st.error(f"Erro ao processar dados: {str(e)}")
+            return pd.DataFrame()
+    return None
 
 def get_user_by_login(url, worksheet_name, login):
     """Busca usuário pelo login"""
     worksheet = get_worksheet(url, worksheet_name)
     if worksheet:
-        for record in worksheet.get_all_records():
-            if str(record.get('Login', '')).lower() == login.lower():
-                return record
+        try:
+            for record in worksheet.get_all_records():
+                if record and 'Login' in record and str(record.get('Login', '')).lower() == login.lower():
+                    return record
+        except Exception as e:
+            st.error(f"Erro ao buscar usuário: {str(e)}")
     return None
 
 def register_user(url, worksheet_name, user_data):
@@ -71,48 +65,83 @@ def register_user(url, worksheet_name, user_data):
     if not worksheet:
         return False, "Planilha não encontrada"
     
-    if get_user_by_login(url, worksheet_name, user_data['Login']):
-        return False, "Usuário já existe"
-    
-    worksheet.append_row([
-        user_data['Login'],
-        user_data['Email'],
-        user_data['Senha'],
-        user_data['Tipo de Usuário']
-    ])
-    return True, "Usuário cadastrado com sucesso"
-    
-
-def read_sheet_to_dataframe_filtered(url, worksheet_name, user_email=None):
-    """Lê uma planilha e filtra pelo e-mail do usuário"""
-    worksheet = get_worksheet(url, worksheet_name)
-    if worksheet:
-        # Obter todos os registros
-        records = worksheet.get_all_records()
-        df = pd.DataFrame(records).fillna('')
+    try:
+        # Verifica se o usuário já existe
+        if get_user_by_login(url, worksheet_name, user_data['Login']):
+            return False, "Usuário já existe"
         
-        # Filtrar pelo e-mail se fornecido
-        if user_email:
-            df = df[df['E-mail'].str.lower() == user_email.lower()]
+        # Obtém os cabeçalhos da planilha
+        headers = worksheet.row_values(1)
         
-        return df
-    return None
+        # Prepara os dados de acordo com os cabeçalhos
+        row_data = []
+        for header in headers:
+            row_data.append(user_data.get(header, ''))
+        
+        # Adiciona o novo usuário
+        worksheet.append_row(row_data)
+        return True, "Usuário cadastrado com sucesso"
+    except Exception as e:
+        return False, f"Erro ao cadastrar usuário: {str(e)}"
 
-def update_row_in_sheet(url, worksheet_name, row_num, new_values):
-    """Atualiza uma linha específica"""
+def update_row_in_sheet(url, worksheet_name, row_num, updated_values):
+    """
+    Atualiza ou adiciona uma linha específica
+    
+    Args:
+        url: URL da planilha
+        worksheet_name: Nome da aba
+        row_num: Número da linha a atualizar (2+ para linhas existentes, -1 para adicionar nova)
+        updated_values: Dicionário com valores a atualizar ou dict/list para nova linha
+    """
     worksheet = get_worksheet(url, worksheet_name)
-    if worksheet:
-        for col, value in enumerate(new_values, start=1):
-            worksheet.update_cell(row_num, col, value)
-        return True
-    return False
+    if not worksheet:
+        return False
+    
+    try:
+        # Obtém os cabeçalhos da planilha
+        headers = worksheet.row_values(1)
+        
+        if row_num == -1:
+            # Adicionar nova linha
+            row_data = []
+            
+            # Se os dados são um dicionário, organizamos pelos cabeçalhos
+            if isinstance(updated_values, dict):
+                for header in headers:
+                    row_data.append(updated_values.get(header, ''))
+            # Se é uma lista, usamos diretamente
+            elif isinstance(updated_values, list):
+                row_data = updated_values
+            
+            worksheet.append_row(row_data)
+            return True
+        else:
+            # Atualizar linha existente
+            if isinstance(updated_values, dict):
+                # Para cada cabeçalho, atualiza o valor correspondente
+                for i, header in enumerate(headers, start=1):
+                    if header in updated_values:
+                        worksheet.update_cell(row_num, i, updated_values[header])
+            elif isinstance(updated_values, list):
+                # Atualiza cada coluna com os valores da lista
+                for i, value in enumerate(updated_values, start=1):
+                    worksheet.update_cell(row_num, i, value)
+            
+            return True
+    except Exception as e:
+        st.error(f"Erro ao atualizar/adicionar linha: {str(e)}")
+        return False
 
 def delete_row_in_sheet(url, worksheet_name, row_num):
     """Remove uma linha específica"""
     worksheet = get_worksheet(url, worksheet_name)
     if worksheet:
-        worksheet.delete_rows(row_num)
-        return True
+        try:
+            worksheet.delete_rows(row_num)
+            return True
+        except Exception as e:
+            st.error(f"Erro ao excluir linha: {str(e)}")
     return False
 
 def apply_filters(df, filters):
@@ -120,9 +149,12 @@ def apply_filters(df, filters):
     try:
         filtered_df = df.copy()
         for col, value in filters.items():
-            if value != "Todos":
+            if value != "Todos" and col in filtered_df.columns:
                 filtered_df = filtered_df[filtered_df[col].astype(str) == str(value)]
         return filtered_df
+    except KeyError as e:
+        st.error(f"Coluna '{e.args[0]}' não encontrada para filtro")
+        return df
     except Exception as e:
         st.error(f"Erro ao aplicar filtros: {str(e)}")
         return df
