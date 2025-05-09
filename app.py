@@ -33,7 +33,7 @@ def hash_password(password):
 def check_login(login, password):
     """Verifica as credenciais do usuário"""
     user = get_user_by_login(SPREADSHEET_URL, WORKSHEET_USERS, login)
-    if user and user['Senha'] == hash_password(password):
+    if user and user.get('Senha') == hash_password(password):
         return True, user
     return False, None
 
@@ -111,11 +111,16 @@ def show_register_form():
 @st.cache_data(ttl=300)
 def load_data(user_email=None):
     """Carrega os dados do cronograma com filtro opcional por e-mail"""
-    return read_sheet_to_dataframe(
+    df = read_sheet_to_dataframe(
         SPREADSHEET_URL, 
         WORKSHEET_DATA,
         user_email
     )
+    # Garante que o DataFrame tenha um índice único para edição/exclusão
+    if df is not None and not df.empty:
+        # Preserva o índice original para uso em operações de edição/exclusão
+        df['_original_index'] = df.index
+    return df
 
 def get_filter_options(df, column):
     """Gera opções para os filtros dinâmicos incluindo 'Todos'"""
@@ -131,7 +136,162 @@ def get_filter_options(df, column):
         st.error(f"Erro ao gerar opções para {column}: {str(e)}")
         return ["Todos"]
 
+def create_dynamic_filters(df, filter_columns):
+    """Cria os controles de filtro dinâmico e retorna os valores selecionados"""
+    filters = {}
+    cols = st.columns(len(filter_columns))
+    
+    for i, column in enumerate(filter_columns):
+        with cols[i]:
+            try:
+                options = get_filter_options(df, column)
+                filters[column] = st.selectbox(
+                    f"Filtrar por {column}",
+                    options=options,
+                    key=f"filter_{column}"
+                )
+            except KeyError:
+                st.error(f"Coluna '{column}' não encontrada")
+                filters[column] = "Todos"
+    
+    return filters
 
+def apply_dynamic_filters(df, filters):
+    """Aplica múltiplos filtros ao DataFrame de forma segura"""
+    try:
+        filtered_df = df.copy()
+        for column, value in filters.items():
+            if value != "Todos" and column in filtered_df.columns:
+                # Converte ambos os valores para string para comparação segura
+                filtered_df = filtered_df[filtered_df[column].astype(str) == str(value)]
+        return filtered_df
+    except KeyError as e:
+        st.error(f"Erro: Coluna '{e.args[0]}' não existe na planilha")
+        return df
+    except Exception as e:
+        st.error(f"Erro ao filtrar dados: {str(e)}")
+        return df
+
+# ==================================================
+# FUNÇÕES DOS MODAIS
+# ==================================================
+def show_edit_modal(row):
+    """Modal de edição"""
+    with st.expander(f"📝 Editando: {row['Referência']}", expanded=True):
+        with st.form(f"edit_form_{row.name}"):
+            # Campos editáveis (ajuste conforme suas colunas)
+            col1, col2 = st.columns(2)
+            with col1:
+                referencia = st.text_input("Referência", value=row.get('Referência', ''))
+                descricao = st.text_area("Descrição", value=row.get('Descrição Meta', ''))
+            with col2:
+                responsavel = st.text_input("Responsável", value=row.get('Responsável', ''))
+                status = st.selectbox(
+                    "Status", 
+                    options=["Em andamento", "Concluído", "Pendente"],
+                    index=["Em andamento", "Concluído", "Pendente"].index(row.get('Status', 'Pendente'))
+                )
+            
+            # Determina o número da linha na planilha (índice original + 2 para o cabeçalho)
+            sheet_row = row.get('_original_index', 0) + 2
+            
+            if st.form_submit_button("💾 Salvar Alterações"):
+                try:
+                    # Recupera todas as colunas da planilha para manter a estrutura
+                    cols_to_update = {
+                        'Referência': referencia,
+                        'Descrição Meta': descricao,
+                        'Responsável': responsavel,
+                        'Status': status
+                    }
+                    
+                    # Atualiza a planilha
+                    updated = update_row_in_sheet(
+                        SPREADSHEET_URL,
+                        WORKSHEET_DATA,
+                        sheet_row,
+                        cols_to_update
+                    )
+                    
+                    if updated:
+                        st.success("Registro atualizado com sucesso!")
+                        # Limpa o cache para forçar recarregamento dos dados
+                        st.cache_data.clear()
+                        # Remove o estado de edição
+                        if 'editing_row' in st.session_state:
+                            del st.session_state['editing_row']
+                        st.rerun()
+                    else:
+                        st.error("Erro ao atualizar o registro.")
+                except Exception as e:
+                    st.error(f"Erro ao atualizar: {str(e)}")
+            
+            if st.button("❌ Cancelar"):
+                if 'editing_row' in st.session_state:
+                    del st.session_state['editing_row']
+                st.rerun()
+
+def show_delete_modal(row):
+    """Modal de exclusão"""
+    with st.expander(f"🗑️ Excluir: {row['Referência']}", expanded=True):
+        st.warning("Tem certeza que deseja excluir este registro?")
+        
+        # Exibe um resumo dos dados para confirmação
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Referência:** {row.get('Referência', 'N/A')}")
+            st.markdown(f"**Descrição:** {row.get('Descrição Meta', 'N/A')}")
+        with col2:
+            st.markdown(f"**Responsável:** {row.get('Responsável', 'N/A')}")
+            st.markdown(f"**Status:** {row.get('Status', 'N/A')}")
+        
+        # Determina o número da linha na planilha
+        sheet_row = row.get('_original_index', 0) + 2
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Confirmar Exclusão", type="primary"):
+                try:
+                    deleted = delete_row_in_sheet(
+                        SPREADSHEET_URL,
+                        WORKSHEET_DATA,
+                        sheet_row
+                    )
+                    if deleted:
+                        st.success("Registro excluído com sucesso!")
+                        # Limpa o cache para forçar recarregamento dos dados
+                        st.cache_data.clear()
+                        if 'deleting_row' in st.session_state:
+                            del st.session_state['deleting_row']
+                        st.rerun()
+                    else:
+                        st.error("Erro ao excluir o registro.")
+                except Exception as e:
+                    st.error(f"Erro ao excluir: {str(e)}")
+        
+        with col2:
+            if st.button("❌ Cancelar"):
+                if 'deleting_row' in st.session_state:
+                    del st.session_state['deleting_row']
+                st.rerun()
+
+def show_details_modal(row):
+    """Modal de detalhes"""
+    with st.expander(f"🔍 Detalhes: {row['Referência']}", expanded=True):
+        # Exibe todos os dados disponíveis de forma formatada
+        for col, val in row.items():
+            # Ignora colunas internas e metadados
+            if col != '_original_index':
+                st.markdown(f"**{col}:** {val}")
+        
+        if st.button("⬅️ Voltar"):
+            if 'viewing_row' in st.session_state:
+                del st.session_state['viewing_row']
+            st.rerun()
+
+# ==================================================
+# FUNÇÃO PRINCIPAL DO SISTEMA
+# ==================================================
 def show_main_app():
     """Conteúdo principal após login"""
     # Verificação de segurança
@@ -141,14 +301,29 @@ def show_main_app():
         st.rerun()
     
     user = st.session_state['user']
-    is_admin = user['Tipo de Usuário'] == "Administrador"
-    user_email = None if is_admin else user['Email']
+    is_admin = user.get('Tipo de Usuário') == "Administrador"
+    user_email = None if is_admin else user.get('Email')
+    
+    # Barra superior com informações do usuário
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.title("📅 Sistema de Cronograma")
+    with col2:
+        st.write(f"👤 **Usuário:** {user.get('Login')}")
+        st.write(f"🔑 **Tipo:** {user.get('Tipo de Usuário')}")
+        if st.button("🚪 Sair"):
+            st.session_state.clear()
+            st.rerun()
     
     # Carrega dados
     df = load_data(user_email)
     
-    if df is None or df.empty:
-        st.warning("Nenhum dado encontrado")
+    if df is None:
+        st.error("Erro ao carregar dados. Verifique sua conexão.")
+        return
+    
+    if df.empty:
+        st.warning("Nenhum dado encontrado na planilha.")
         return
     
     # Define colunas para filtros (ajuste conforme sua planilha)
@@ -165,177 +340,99 @@ def show_main_app():
     st.header("Resultados", divider="rainbow")
     st.subheader(f"📊 Total de registros: {len(filtered_df)}")
     
-    if not filtered_df.empty:
-        for _, row in filtered_df.iterrows():
-            with st.container(border=True):
-                # Seu código de exibição por card
-                cols = st.columns([4, 1])
-                with cols[0]:
-                    st.markdown(f"**Referência:** `{row['Referência']}`")
-                    st.markdown(f"**Descrição:** {row['Descrição Meta']}")
-                with cols[1]:
-                    if st.button("Editar", key=f"edit_{row.name}"):
-                        handle_edit(row)
-    else:
-        st.warning("Nenhum registro corresponde aos filtros selecionados")
-        
-        # ========================================
-        # EXIBIÇÃO DOS CARDS (CONTAINER APPROACH)
-        # ========================================
-        st.header("Resultados", divider="rainbow")
-        st.subheader(f"📊 Total de registros: {len(filtered_df)}")
-        
-        if not filtered_df.empty:
-            for idx, row in filtered_df.iterrows():
-                with st.container(border=True):
-                    # Layout do card
-                    cols = st.columns([4, 1])
-                    
-                    # Coluna esquerda: Dados
-                    with cols[0]:
-                        st.markdown(f"**Referência:** `{row['Referência']}`")
-                        st.markdown(f"**Descrição:** {row['Descrição Meta']}")
-                        st.markdown(f"**Responsável:** {row['Responsável']}")
-                        st.markdown(f"**Status:** {row.get('Status', 'N/A')}")
-                    
-                    # Coluna direita: Botões de ação
-                    with cols[1]:
-                        if st.button("📝 Editar", key=f"edit_{idx}"):
-                            st.session_state['editing_row'] = row.to_dict()
-                        
-                        if st.button("🗑️ Excluir", key=f"delete_{idx}"):
-                            st.session_state['deleting_row'] = row.to_dict()
-                        
-                        if st.button("🔍 Detalhes", key=f"details_{idx}"):
-                            st.session_state['viewing_row'] = row.to_dict()
-            
-            # ========================================
-            # MODAIS DE AÇÃO (EDITAR/EXCLUIR/DETALHES)
-            # ========================================
-            if 'editing_row' in st.session_state:
-                show_edit_modal(pd.Series(st.session_state['editing_row']))
-                
-            if 'deleting_row' in st.session_state:
-                show_delete_modal(pd.Series(st.session_state['deleting_row']))
-                
-            if 'viewing_row' in st.session_state:
-                show_details_modal(pd.Series(st.session_state['viewing_row']))
-        
-        else:
-            st.warning("Nenhum registro encontrado com os filtros selecionados!")
+    # Adicionar novo registro
+    if st.button("➕ Adicionar Novo Registro"):
+        st.session_state['adding_row'] = True
     
-    elif df is not None and df.empty:
-        st.warning("Nenhum registro encontrado na planilha!")
-    else:
-        st.error("Erro ao carregar dados. Verifique sua conexão.")
-
-def apply_dynamic_filters(df, filters):
-    """Aplica múltiplos filtros ao DataFrame de forma segura"""
-    try:
-        filtered_df = df.copy()
-        for column, value in filters.items():
-            if value != "Todos":
-                # Converte ambos os valores para string para comparação segura
-                filtered_df = filtered_df[filtered_df[column].astype(str) == str(value)]
-        return filtered_df
-    except KeyError as e:
-        st.error(f"Erro: Coluna '{e.args[0]}' não existe na planilha")
-        return df
-    except Exception as e:
-        st.error(f"Erro ao filtrar dados: {str(e)}")
-        return df
-
-def create_dynamic_filters(df, filter_columns):
-    """Cria os controles de filtro dinâmico e retorna os valores selecionados"""
-    filters = {}
-    cols = st.columns(len(filter_columns))
-    
-    for i, column in enumerate(filter_columns):
-        with cols[i]:
-            try:
-                options = ["Todos"] + sorted(df[column].dropna().unique().tolist())
-                filters[column] = st.selectbox(
-                    f"Filtrar por {column}",
-                    options=options,
-                    key=f"filter_{column}"
-                )
-            except KeyError:
-                st.error(f"Coluna '{column}' não encontrada")
-                filters[column] = "Todos"
-    
-    return filters
-
-
-# ==================================================
-# FUNÇÕES DOS MODAIS
-# ==================================================
-def show_edit_modal(row):
-    """Modal de edição"""
-    with st.expander(f"📝 Editando: {row['Referência']}", expanded=True):
-        with st.form(f"edit_form_{row.name}"):
-            # Campos editáveis (ajuste conforme suas colunas)
-            referencia = st.text_input("Referência", value=row['Referência'])
-            descricao = st.text_area("Descrição", value=row['Descrição Meta'])
-            status = st.selectbox(
-                "Status", 
-                options=["Em andamento", "Concluído", "Pendente"],
-                index=["Em andamento", "Concluído", "Pendente"].index(row.get('Status', 'Pendente'))
-            )
-            
-            if st.form_submit_button("💾 Salvar Alterações"):
-                try:
-                    # Atualiza a planilha
-                    updated = update_row_in_sheet(
-                        SPREADSHEET_URL,
-                        WORKSHEET_DATA,
-                        row.name + 2,  # +2 para compensar cabeçalho e index 0
-                        [referencia, descricao, status]  # Ajuste conforme suas colunas
+    # Modal para adicionar novo registro
+    if st.session_state.get('adding_row', False):
+        with st.expander("➕ Novo Registro", expanded=True):
+            with st.form("add_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    referencia = st.text_input("Referência*")
+                    descricao = st.text_area("Descrição*")
+                with col2:
+                    responsavel = st.text_input("Responsável*")
+                    status = st.selectbox(
+                        "Status*", 
+                        options=["Pendente", "Em andamento", "Concluído"],
+                        index=0
                     )
-                    if updated:
-                        st.success("Registro atualizado com sucesso!")
-                        st.cache_data.clear()
-                        del st.session_state['editing_row']
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao atualizar: {str(e)}")
-            
-            if st.button("❌ Cancelar"):
-                del st.session_state['editing_row']
-                st.rerun()
-
-def show_delete_modal(row):
-    """Modal de exclusão"""
-    with st.expander(f"🗑️ Excluir: {row['Referência']}", expanded=True):
-        st.warning("Tem certeza que deseja excluir este registro?")
-        st.json(row.to_dict())
-        
-        if st.button("✅ Confirmar Exclusão", type="primary"):
-            try:
-                deleted = delete_row_in_sheet(
-                    SPREADSHEET_URL,
-                    WORKSHEET_DATA,
-                    row.name + 2
-                )
-                if deleted:
-                    st.success("Registro excluído com sucesso!")
-                    st.cache_data.clear()
-                    del st.session_state['deleting_row']
+                    
+                if st.form_submit_button("💾 Salvar"):
+                    if not all([referencia, descricao, responsavel]):
+                        st.error("Preencha todos os campos obrigatórios!")
+                    else:
+                        try:
+                            # Adiciona o novo registro como última linha
+                            new_row = {
+                                'Referência': referencia,
+                                'Descrição Meta': descricao,
+                                'Responsável': responsavel,
+                                'Status': status,
+                                'E-mail': user.get('Email', '')  # Associa o email do usuário
+                            }
+                            
+                            # Cria uma função no módulo utils/google_sheets.py para adicionar linha
+                            # Por enquanto, usamos update_row_in_sheet com índice -1 para adicionar na última linha
+                            added = update_row_in_sheet(
+                                SPREADSHEET_URL,
+                                WORKSHEET_DATA,
+                                -1,  # -1 indica para adicionar como última linha
+                                new_row
+                            )
+                            
+                            if added:
+                                st.success("Registro adicionado com sucesso!")
+                                st.cache_data.clear()
+                                del st.session_state['adding_row']
+                                st.rerun()
+                            else:
+                                st.error("Erro ao adicionar registro.")
+                        except Exception as e:
+                            st.error(f"Erro ao adicionar: {str(e)}")
+                
+                if st.button("❌ Cancelar"):
+                    del st.session_state['adding_row']
                     st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao excluir: {str(e)}")
-        
-        if st.button("❌ Cancelar"):
-            del st.session_state['deleting_row']
-            st.rerun()
-
-def show_details_modal(row):
-    """Modal de detalhes"""
-    with st.expander(f"🔍 Detalhes: {row['Referência']}", expanded=True):
-        st.json(row.to_dict())
-        
-        if st.button("⬅️ Voltar"):
-            del st.session_state['viewing_row']
-            st.rerun()
+    
+    # Exibe os resultados filtrados em cards
+    if not filtered_df.empty:
+        for idx, row in filtered_df.iterrows():
+            with st.container(border=True):
+                # Layout do card
+                cols = st.columns([4, 1])
+                
+                # Coluna esquerda: Dados
+                with cols[0]:
+                    st.markdown(f"**Referência:** `{row.get('Referência', 'N/A')}`")
+                    st.markdown(f"**Descrição:** {row.get('Descrição Meta', 'N/A')}")
+                    st.markdown(f"**Responsável:** {row.get('Responsável', 'N/A')}")
+                    st.markdown(f"**Status:** {row.get('Status', 'N/A')}")
+                
+                # Coluna direita: Botões de ação
+                with cols[1]:
+                    if st.button("📝 Editar", key=f"edit_{idx}"):
+                        st.session_state['editing_row'] = row.to_dict()
+                    
+                    if st.button("🗑️ Excluir", key=f"delete_{idx}"):
+                        st.session_state['deleting_row'] = row.to_dict()
+                    
+                    if st.button("🔍 Detalhes", key=f"details_{idx}"):
+                        st.session_state['viewing_row'] = row.to_dict()
+    else:
+        st.warning("Nenhum registro corresponde aos filtros selecionados.")
+    
+    # Processa modais de ação
+    if 'editing_row' in st.session_state:
+        show_edit_modal(pd.Series(st.session_state['editing_row']))
+    
+    if 'deleting_row' in st.session_state:
+        show_delete_modal(pd.Series(st.session_state['deleting_row']))
+    
+    if 'viewing_row' in st.session_state:
+        show_details_modal(pd.Series(st.session_state['viewing_row']))
 
 # ==================================================
 # PONTO DE ENTRADA
@@ -347,6 +444,8 @@ def main():
         st.session_state['logged_in'] = False
     if 'show_register' not in st.session_state:
         st.session_state['show_register'] = False
+    if 'adding_row' not in st.session_state:
+        st.session_state['adding_row'] = False
     
     # Controle de fluxo
     if not st.session_state['logged_in']:
