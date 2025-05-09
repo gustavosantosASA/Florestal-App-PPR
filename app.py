@@ -125,9 +125,21 @@ def load_data(user_email=None):
 def get_filter_options(df, column):
     """Gera opções para os filtros dinâmicos incluindo 'Todos'"""
     try:
-        # Remove valores nulos e duplicados, converte para string e ordena
+        # Remove valores nulos e duplicados
         unique_values = df[column].dropna().unique()
-        options = ["Todos"] + sorted([str(x) for x in unique_values if x not in [None, "", " "]])
+        
+        # Tratamento especial para Descrição Meta - truncar textos longos
+        if column == 'Descrição Meta':
+            # Limita o número de opções para evitar listas muito grandes
+            max_options = 15
+            # Trunca descrições longas para exibição no dropdown
+            options = ["Todos"] + [f"{str(x)[:50]}..." if len(str(x)) > 50 else str(x) 
+                                  for x in unique_values[:max_options] 
+                                  if x not in [None, "", " "]]
+        else:
+            # Para outras colunas, mantém o comportamento normal
+            options = ["Todos"] + sorted([str(x) for x in unique_values if x not in [None, "", " "]])
+        
         return options
     except KeyError:
         st.error(f"Coluna '{column}' não encontrada na planilha")
@@ -162,8 +174,14 @@ def apply_dynamic_filters(df, filters):
         filtered_df = df.copy()
         for column, value in filters.items():
             if value != "Todos" and column in filtered_df.columns:
-                # Converte ambos os valores para string para comparação segura
-                filtered_df = filtered_df[filtered_df[column].astype(str) == str(value)]
+                if column == 'Descrição Meta':
+                    # Para Descrição Meta, remove a parte "..." se estiver presente
+                    search_value = str(value).replace("...", "")
+                    # Usa busca por substring (contém) em vez de igualdade exata
+                    filtered_df = filtered_df[filtered_df[column].astype(str).str.contains(search_value, case=False, na=False)]
+                else:
+                    # Para outros campos, mantém a comparação de igualdade exata
+                    filtered_df = filtered_df[filtered_df[column].astype(str) == str(value)]
         return filtered_df
     except KeyError as e:
         st.error(f"Erro: Coluna '{e.args[0]}' não existe na planilha")
@@ -183,7 +201,7 @@ def show_edit_modal(row):
             col1, col2 = st.columns(2)
             with col1:
                 referencia = st.text_input("Referência", value=row.get('Referência', ''))
-                descricao = st.text_area("Descrição", value=row.get('Descrição Meta', ''))
+                descricao = st.text_area("Descrição Meta", value=row.get('Descrição Meta', ''), height=150)
             with col2:
                 responsavel = st.text_input("Responsável", value=row.get('Responsável', ''))
                 status = st.selectbox(
@@ -327,7 +345,7 @@ def show_main_app():
         return
     
     # Define colunas para filtros (ajuste conforme sua planilha)
-    filter_columns = ['Referência', 'Setor', 'Responsável', 'Status']
+    filter_columns = ['Referência', 'Setor', 'Responsável', 'Descrição Meta']
     
     # Seção de filtros
     st.header("Filtros Avançados", divider="rainbow")
@@ -351,7 +369,7 @@ def show_main_app():
                 col1, col2 = st.columns(2)
                 with col1:
                     referencia = st.text_input("Referência*")
-                    descricao = st.text_area("Descrição*")
+                    descricao = st.text_area("Descrição Meta*", height=150)
                 with col2:
                     responsavel = st.text_input("Responsável*")
                     status = st.selectbox(
